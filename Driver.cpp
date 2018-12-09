@@ -83,29 +83,36 @@ double doOnePass(double* in, double* out, int maxr, int maxc) {
 	double maxChange = 0; //Used to store the biggest change seen
 	double newVal, currChange; //Used for the the processing/swap
 
-#pragma omp parallel for \
-		default(none) \
-		private(newVal, currChange) \
-		schedule(dynamic, 1) \
-		shared(maxChange, output)
-	for (int r = 1; r < maxr - 1; r++) { //Internal rows
-		for (int c = 1; c < maxc - 1; c++) { //Internal columns
-			newVal = (getCell(in, maxc, r - 1, c) + getCell(in, maxc, r + 1, c) + getCell(in, maxc, r, c + 1) + getCell(in, maxc, r, c - 1)) / 4.0;		
-            currChange = getCell(in, maxc, r, c) - newVal;
-            if (currChange < 0) {
-                currChange *= -1;
-            }
+#pragma omp parallel \
+	default(none) \
+	shared(maxChange, in, out, maxc, maxr)
+	{
+		double newVal, currChange; //Used for the the processing/swap
+		double localMaxChange = 0;
 
-			// Write the new result
-			setCell(out, maxc, r, c, newVal);
+#pragma omp for nowait
+		for (int r = 1; r < maxr - 1; r++) { //Internal rows
+			for (int c = 1; c < maxc - 1; c++) { //Internal columns
+				newVal = (getCell(in, maxc, r - 1, c) + getCell(in, maxc, r + 1, c) + getCell(in, maxc, r, c + 1) + getCell(in, maxc, r, c - 1)) / 4.0;
+				currChange = getCell(in, maxc, r, c) - newVal;
 
-			// Check if this is the max change
-#pragma omp critical
-			{
-				if (currChange > maxChange) {
-					maxChange = currChange;
-                }
+				if (currChange < 0) {
+					currChange *= -1;
+				}
+
+				// Write the new result
+				setCell(out, maxc, r, c, newVal);
+
+				// Check if this is the max change
+				if (currChange > localMaxChange)
+					localMaxChange = currChange;
 			}
+		}
+
+#pragma omp critical
+		{
+			if (localMaxChange > maxChange)
+				maxChange = localMaxChange;
 		}
 	}
 
