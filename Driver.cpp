@@ -169,9 +169,6 @@ int main() {
 		// Print basic program info/description
 		//printf("Calvis, Oberlander, Thurman ~ COMP 322.A ~ Jacobi\nRuns Jacobi Iterations and Creates a PPM output file\n\n");
 
-		// Seed random so we can be sure to get a distinct set of numbers each run
-		srand(time(0));
-
 		startTime = MPI_Wtime();
 
 		// Init the boundries in a constants based way
