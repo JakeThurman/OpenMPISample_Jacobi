@@ -17,7 +17,7 @@
 #include <mpi.h>
 
 // Threshold constant, the iterations stop when changes are smaller than this. 
-#define EPSILON 2e-2
+#define EPSILON 1e-2
 
 // Size of the plate
 #define ROWS 1000
@@ -63,10 +63,12 @@ double* copy_arr(int size, const double* cpy) {
 	// Generate a 1d array to hold our 2d array
 	double* arr = (double*)malloc(size * sizeof(double));
 
-	// Create all the rows
+    // Create all the rows
 	for (int i = 0; i < size; i++) {
 		arr[i] = cpy[i];
 	}
+
+    return arr;
 }
 
 double getCell(double* arr, int maxCols, int row, int col) {
@@ -88,8 +90,11 @@ double doOnePass(double* in, double* out, int maxr, int maxc) {
 		shared(maxChange, output)
 	for (int r = 1; r < maxr - 1; r++) { //Internal rows
 		for (int c = 1; c < maxc - 1; c++) { //Internal columns
-			newVal = (getCell(in, maxc, r - 1, c) + getCell(in, maxc, r + 1, c) + getCell(in, maxc, r, c + 1) + getCell(in, maxc, r, c - 1)) / 4.0;
-			currChange = abs(getCell(in, maxc, r, c) - newVal);
+			newVal = (getCell(in, maxc, r - 1, c) + getCell(in, maxc, r + 1, c) + getCell(in, maxc, r, c + 1) + getCell(in, maxc, r, c - 1)) / 4.0;		
+            currChange = getCell(in, maxc, r, c) - newVal;
+            if (currChange < 0) {
+                currChange *= -1;
+            }
 
 			// Write the new result
 			setCell(out, maxc, r, c, newVal);
@@ -97,8 +102,9 @@ double doOnePass(double* in, double* out, int maxr, int maxc) {
 			// Check if this is the max change
 #pragma omp critical
 			{
-				if (currChange > maxChange)
+				if (currChange > maxChange) {
 					maxChange = currChange;
+                }
 			}
 		}
 	}
@@ -106,39 +112,28 @@ double doOnePass(double* in, double* out, int maxr, int maxc) {
 	return maxChange;
 }
 
-void toPPM(double* arr, const char* pathFileName, double epsilon) {
-	ofstream myfile(pathFileName); //the file we will output to
+void toPPM(double time, double* arr) {
 	int red, blue; //store the color representation of the heat
 	int pixelCount = 0; //counts the number of pixels per line in the file so we don't overflow
 
-	if (myfile.is_open()) {
-		// Include the header for the ppm file
-		myfile
-			<< "P3\n" << ROWS << " " << COLS << " # image width/cols x height/rows" << endl
-			<< "# Jake Thurman ~ COMP 322.A" << endl
-			<< "# Epsilon: " << epsilon << endl
-			<< "255 #max pixel value" << endl;
+	// Include the header for the ppm file
+	printf(
+        "P3\n%d %d # Time: %f\n# Thurman,Calvis,Oberlander ~ COMP 322.A\n# Epsilon: %f\n255 #max pixel value\n",
+		COLS, ROWS, time, EPSILON);
+        
+	// Calculate/print a color
+	for (int i = 0; i < ROWS * COLS; i++) {
+		// Get the temp (0 to 100) converted to a 0 to 255 scale
+		red = (int)ceil(arr[i] * 255.0 / 100.0);;
+		blue = 255 - red;
 
-		// Calculate/print a color
-		for (int i = 0; i < ROWS * COLS; i++) {
-			// Get the temp (0 to 100) converted to a 0 to 255 scale
-			red = (int)ceil(arr[i] * 255.0 / 100.0);;
-			blue = 255 - red;
+		// Output to file as "R G B"
+		printf("%d 0 %d ", red, blue);
 
-			// Output to file as "R G B"
-			myfile << red << " 0 " << blue << " ";
-
-			// Insert a newline after every few pixels so we can 
-			//  can be sure we don't exceed 70 characters per line
-			if (++pixelCount % PIXELS_PER_LINE == 0)
-				myfile << "\n";
-		}
-
-		// Release the file
-		myfile.close();
-	}
-	else {
-		printf("Unable to open file");
+		// Insert a newline after every few pixels so we can 
+		//  can be sure we don't exceed 70 characters per line
+    	if (++pixelCount % PIXELS_PER_LINE == 0)
+			printf("\n");
 	}
 }
 
@@ -162,23 +157,17 @@ int main() {
 	MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
 
-	FILE* file;
 	double startTime, stopTime, elapsedSeconds;
 
 	// Set all to use 4 threads
-	omp_set_num_threads(4);
+	//omp_set_num_threads(4);
 
 	// Let master init the jacobi instance
 	if (my_rank == 0) {
 		masterJacobi = new_jacobi(ROWS, COLS, INIT_TEMP);
 
-		fopen_s(&file, "data.csv", "a");
-		if (!file) {
-			printf("failed to open file");
-		}
-
 		// Print basic program info/description
-		printf("Calvis, Oberlander, Thurman ~ COMP 322.A ~ Jacobi\nRuns Jacobi Iterations and Creates a PPM output file\n\n");
+		//printf("Calvis, Oberlander, Thurman ~ COMP 322.A ~ Jacobi\nRuns Jacobi Iterations and Creates a PPM output file\n\n");
 
 		// Seed random so we can be sure to get a distinct set of numbers each run
 		srand(time(0));
@@ -203,55 +192,59 @@ int main() {
 	MPI_Scatter(masterJacobi, localRows * COLS, MPI_DOUBLE, localJacobi, localRows * COLS, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
 	// Handle trading off top and bottom rows
-	int hasTopRowExtra = my_rank != 0;
-	int hasBottomRowExtra = my_rank != (num_procs - 1);
-	int extraRows = hasTopRowExtra + hasBottomRowExtra;
+	hasTopRowExtra = my_rank != 0;
+	hasBottomRowExtra = my_rank != (num_procs - 1);
+	extraRows = hasTopRowExtra + hasBottomRowExtra;
 	
 	// Create a local jacobi with neighboring rows. 
 	//  First, we copy over what we have so far.
-	double* withNeighbors = (double*)malloc(extraRows * COLS + localRows * COLS * sizeof(double));
+	double* withNeighbors = (double*)malloc((extraRows + localRows) * COLS * sizeof(double));
+	
 	for (int i = 0; i < localRows * COLS; i++) {
 		withNeighbors[i + (hasTopRowExtra * COLS)] = localJacobi[i];
 	}
 
-	if (hasTopRowExtra) {
-		// Send first row to neighbor above
-		MPI_Send(localJacobi, COLS, MPI_DOUBLE, my_rank - 1, 0, MPI_COMM_WORLD);
-	}
-
-	if (hasBottomRowExtra) {
-		// Recieve neighbor below's first row as last row
-		MPI_Recv((withNeighbors + (localRows * COLS) + (hasTopRowExtra * COLS)), COLS, MPI_DOUBLE, my_rank + 1, 0, MPI_COMM_WORLD, NULL);
-
-		// Send last row to neighbor below
-		MPI_Send((localJacobi + (localRows * COLS) - COLS), COLS, MPI_DOUBLE, my_rank + 1, 0, MPI_COMM_WORLD);
-	}
-
-	if (hasTopRowExtra) {
-		// Recieve neighbor above's last row as first row
-		MPI_Recv(withNeighbors, COLS, MPI_DOUBLE, my_rank - 1, 0, MPI_COMM_WORLD, NULL);
-	}
-
 	free(localJacobi);
 	localJacobi = withNeighbors;
-	localRows += extraRows;
+	withNeighbors = NULL;
 	
 
 	//2.0 Running Jacobi Iterations
 	while (lastMaxChange >= EPSILON) {
+		// Sync up neighbors again!!!
+		if (hasTopRowExtra) {
+			// Send first row I own to neighbor above
+			MPI_Send(localJacobi + COLS, COLS, MPI_DOUBLE, my_rank - 1, 0, MPI_COMM_WORLD);
+		}
+
+		if (hasBottomRowExtra) {
+			// Recieve neighbor below's first row owned as overall last row
+			MPI_Recv(localJacobi + ((localRows + hasTopRowExtra) * COLS), COLS, MPI_DOUBLE, my_rank + 1, 0, MPI_COMM_WORLD, NULL);
+
+			// Send last row to neighbor below
+			MPI_Send(localJacobi + ((localRows + hasTopRowExtra - 1) * COLS), COLS, MPI_DOUBLE, my_rank + 1, 0, MPI_COMM_WORLD);
+		}
+
+		if (hasTopRowExtra) {
+			// Recieve neighbor above's last row owned as overall first row
+			MPI_Recv(localJacobi, COLS, MPI_DOUBLE, my_rank - 1, 0, MPI_COMM_WORLD, NULL);
+		}
+
 		// Load up the next jacobi iteration and store it
-		double* next = copy_arr(localRows * COLS, localJacobi); // Stores the jacobi instance we perform a pass to.
-		lastMaxChange = doOnePass(localJacobi, next, localRows, COLS);
+		double* next = copy_arr((localRows + extraRows) * COLS, localJacobi); // Stores the jacobi instance we perform a pass to.
+		double localLastMaxChange = doOnePass(localJacobi, next, localRows + extraRows, COLS);
+
+		// Sync the last max change made
+		MPI_Allreduce(&localLastMaxChange, &lastMaxChange, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
 
 		// Set this as our new current instance
 		free(localJacobi);
 		localJacobi = next;
-		
 		iterations++;
 	}
 
 	// Reduce the data back into the master...
-	int toSendSize = (localRows - extraRows) * COLS;
+	int toSendSize = localRows * COLS;
 	MPI_Gather(localJacobi + (hasTopRowExtra * COLS), toSendSize, MPI_DOUBLE, masterJacobi, toSendSize, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
 	//3.0 Outputing results
@@ -259,19 +252,19 @@ int main() {
 		// Print runtime
 		stopTime = MPI_Wtime();
 		elapsedSeconds = stopTime - startTime;
-		fprintf(file, "%f\n", elapsedSeconds);
-		printf("%f\n", elapsedSeconds);
+		//printf("Time to completion:   %f\n", elapsedSeconds);
 
 		// Create file
-		toPPM(masterJacobi, "Jacobi_MPI.ppm", EPSILON);
+		toPPM(elapsedSeconds, masterJacobi);
 
 		// Exit
-		printf("Program completed successfully.\n");
+		//printf("Program completed successfully.\n");
+	    
+		free(masterJacobi);
 	}
 
 	//4.0 Cleanup 
 	free(localJacobi);
-	free(masterJacobi);
 	MPI_Finalize();
 
 	return 0; //no error
