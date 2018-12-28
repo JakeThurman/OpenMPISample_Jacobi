@@ -1,12 +1,6 @@
 // Jake Thurman ~ COMP 322.A ~ Jacobi
 // Runs Jacobi Iterations and Creates a PPM output file
 
-/*
-	---------------------------------------------------------
-	For documentation on using the Jacobi class, see Jacobi.h
-	---------------------------------------------------------
-*/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
@@ -34,18 +28,6 @@
 
 // Output Config
 #define PIXELS_PER_LINE 5
-\
-/*
-
-Jacobi
-- "slices" 3.4.6
-- MPI_Scatter, MPI_Scatterv
-- Splits up data into num_procs chunks
-- Send/Receive top and bottom borders as "constant" rows for neighboring chunks (except on first and last chunk of course)
-
-- MPI_Reduce, MPI_allreduce (allreduce sends the answer to everyone)
- 
- */
 
 double* new_jacobi(int maxRows, int maxCols, int initTemperature) {
 	// Generate a 1d array to hold our 2d array
